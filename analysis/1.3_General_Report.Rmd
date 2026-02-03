@@ -1,0 +1,467 @@
+---
+title: "Market General Report"
+author: ''
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+  word_document:
+    toc: true
+  pdf_document:
+    toc: true
+subtitle: "2024-2025 Seasons"
+fontsize: 11pt
+---
+
+# Dependencies
+
+- 1.0_Data_Pre_Processing.Rmd
+- 1.1_Calendar_Generation.Rmd
+- 1.3_Order_Data_Variable_Selection.Rmd
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE
+)
+```
+
+
+```{r}
+library(tidyverse)
+library(here)
+# order data = ordiginal dataset!
+od  <- here("data","raw","od_raw.rds") %>% read_rds() %>% 
+  dplyr::select(where(~ !(is.numeric(.) && all(. == 0, na.rm = FALSE))))
+                     
+cal <- here("data","calendar","cal.rds") %>% read_rds()
+category <- here("data","item_counts_categorized3.xlsx") %>% readxl::read_xlsx()
+
+week_metrics_by_category <- here("data","processed","week_metrics_by_category.rds") %>% read_rds()
+week_metrics <- here("data","processed","week_metrics.rds") %>% read_rds()
+```
+
+
+
+```{r}
+#od %>% filter( year == 2024 ) %>% pull(week) %>% summary()
+#od %>% filter( year == 2025 ) %>% pull(week) %>% summary()
+```
+
+
+# Overview
+
+
+## Key variables
+
+- order = one transaction with one customer
+- item_name = singular item, entered multiple times/per order if multiple of one item purchased
+- item_price = price for one item
+- item_gross_amount = total cost before deductions 
+- item_total_discount = discount rounded to nearest cent
+    + item_disc_amount_from_perc and item_net_discount_amount are not rounded to nearest percent.
+- item_net_amount = cost after deductions
+
+```{r}
+# item data
+item_data <- od %>% dplyr::select(
+  #order, # order number
+  year, date, week, day, hour, daypart, 
+  order, item_name, category,
+  item_price,
+  item_gross_amount,   # gross
+  item_total_discount, # deductions 
+  item_net_amount,     # gross - deductions
+  #employee,
+  payment_type, payment_time,# card_type,
+) %>% arrange(date) %>%
+  mutate( doy = yday(date) ) %>%
+  relocate(doy, .after = date)
+write_rds(item_data, "item_data.rds")
+```
+
+Should be case:
+
+> item_gross_amount - item_total_discount = item_net_amount
+
+
+Not for 897 records.
+```{r}
+# Exceptions
+excp <- which( as.integer((od$item_gross_amount - od$item_total_discount)*100) != 
+         as.integer((od$item_net_amount)*100)
+)
+length(excp)
+```
+
+**Variables with issues:**
+
+- order_net
+- order_profit
+- order_amount_collected
+
+
+A bunch of item_name "Manual Transactions" with negative order_amount_collected
+
+**Not used/No Data:**
+
+- item_cost
+- order_tax
+- order_tip_amount
+- order_tip_amount_refund
+- order_service_charge
+- order_non_revenue_amount
+
+**Used sometimes, but has issues:**
+
+- order_item_cost
+- order_item_cost_and_tax
+
+```{r}
+#colnames(od)
+```
+
+
+
+
+
+# Yearly metrics
+
+```{r}
+summary_by_year <- od %>% group_by(year) %>% 
+  summarize(
+    records = n(),
+    orders = n_distinct(order),
+    gross = sum(item_gross_amount),
+    net =   sum(item_net_amount),
+    discounts = sum(item_net_discount_amount),
+    ave_items_per_order = records/orders,
+    ave_gross_per_order = net/orders,
+  )
+```
+
+```{r}
+summary_by_year %>% 
+  column_to_rownames("year") %>%
+  mutate(across(where(is.numeric), scales::comma)) %>% 
+  t() %>% 
+  as.data.frame()
+```
+
+
+
+Number of Items by Category
+
+```{r}
+od %>% count(category, year, sort = T) %>% 
+  pivot_wider( names_from = year, values_from = n, values_fill = 0) %>% 
+  mutate( 
+    difference = `2025` - `2024`)
+```
+
+
+
+```{r}
+od %>% 
+  count(category, year, sort = TRUE) %>% 
+  ggplot(aes(x = reorder(category, n), y = n, fill = year)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(
+    x = "Category",
+    y = "Count",
+    title = "Counts by Category"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1/1000, suffix = "k")
+  ) +
+  theme_minimal()
+```
+
+**Observations:**
+
+- Marked improvement in categorization to 2025.
+- Baked goods seem appropriately categorized
+
+
+
+# Gross Revenue by Date
+
+```{r}
+model_data <- item_data %>% group_by(doy, year) %>% 
+  summarize(
+    records = n(),
+    orders = n_distinct(.data$order),
+    ave = records/orders,
+    gross = sum(item_gross_amount),
+    net =   sum(item_net_amount),
+    discounts = sum(item_total_discount),
+    .groups = "drop"
+  )
+#glimpse(model_data)
+```
+
+
+```{r}
+model_data %>% ggplot(aes(x = doy, y = gross)) +
+  geom_line() + 
+  facet_wrap(~year) +
+  scale_x_continuous(
+    breaks = yday(seq(as.Date("2024-01-01"), as.Date("2024-12-01"), by = "month")),
+    labels = month.abb
+  ) 
+```
+
+**Note**: 
+
+- removing two dates start of 2025 season
+    + 2025-06-02 - 2 records
+    + 2025-06-05 - 5 records
+
+
+```{r}
+#od %>% filter( date %in% c(date("2025-06-02"),
+#                           date("2025-06-05")))
+```
+
+
+# Weekly Analyis
+
+
+
+For studying seasonal effects
+
+## Weekly Gross Sales
+
+
+
+```{r}
+week_metrics %>% ggplot(aes(start_date, gross, col = weather_mean)) +
+  geom_smooth(span = 1) + 
+  geom_point() +
+  facet_wrap(~year, scales = "free_x") +
+  labs(
+    title = "Gross Sales by Week",
+    y = "Gross Sales",
+    x = "Week Start Date"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_dollar(scale = 1e-3, suffix = "k")
+  )
+```
+
+**Conclusions:**
+
+- We have clear indication to use quadratic for modeling week of season effects.
+- Bad weather week of Canadian Thanksgiving doesn't appear to impact sales
+- In fact, average weather is not great indicator across season
+
+
+## Weekly Orders (Transactions per week)
+
+```{r}
+week_metrics %>% ggplot(aes(start_date, num_orders, col = weather_mean)) +
+  geom_smooth(span = 1) + 
+  geom_point() +
+  facet_wrap(~year, scales = "free_x") +
+  labs(
+    title = "Number of Orders by Week",
+    y = "Orders/week",
+    x = "Week Start Date"
+  )
+```
+
+
+## Weekly Average Sales per Order
+```{r}
+week_metrics %>% ggplot(aes(start_date, gross_per_order, col = weather_mean)) +
+  geom_smooth(span = 1) + 
+  geom_point() +
+  facet_wrap(~year, scales = "free_x") +
+  labs(
+    title = "Average Sales per Order by Week",
+    y = "Ave Sales/Order",
+    x = "Week Start Date"
+  )+
+  scale_y_continuous(
+    labels = scales::label_dollar()
+  )
+```
+
+
+**Notes:**
+
+- Higher traffic mid season, lower average orders
+    + due to produce sales?
+    + other factors
+- Strategies to increase size of orders mid-season
+    + study small/single item orders
+    + market analysis for items that complementary reason for those visits
+    
+- I imagine loyal customers are more consistent though out the season
+    + ways to track individual customers - large number number use electronic payment
+    + use that data to study what promotes customer loyalty
+    
+
+## Weekly Total Discounts
+
+
+```{r}
+week_metrics %>% ggplot(aes(start_date, discounts, col = weather_mean)) +
+  geom_smooth(span = 1) + 
+  geom_point() +
+  facet_wrap(~year, scales = "free_x") +
+  labs(
+    title = "Total Discounts by Week",
+    y = "Total Discounts/Week",
+    x = "Week Start Date"
+  )+
+  scale_y_continuous(
+    labels = scales::label_dollar()
+  )
+```
+
+**Questions:**
+
+- Impact analysis of higher discounting at end of 2025 seasons
+
+
+## Weekly Analysis by Category
+
+
+```{r}
+labels = week_metrics_by_category %>% group_by(category) %>% 
+  summarize(
+    total_records = sum(num_items),
+    gross = sum(gross)
+  ) %>% arrange(desc(gross)) %>% pull(category)
+
+week_metrics_by_category <- week_metrics_by_category %>% 
+  mutate(
+    category = factor(category, levels = labels)
+  )
+```
+
+
+```{r}
+week_metrics_by_category %>% 
+  filter( category %in% labels[1:8]) %>% 
+  ggplot(aes(start_date, gross, color = factor(category))) +
+  geom_smooth(span = 1) + 
+  geom_point() +
+  facet_wrap(~year, scales = "free_x") +  
+  labs(
+    title = "Gross Sales by Category and Week (Top 8 Categories)",
+    y = "Gross Sales",
+    x = "Week Start Date",
+    color = "Category"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_dollar(scale = 1e-3, suffix = "k")
+  )
+```
+
+**Recommendation:**
+
+- Categorize the items that dominate around Canadian Thanksgiving... Pies??
+
+
+
+## Weekly Transaction Analysis
+
+Payment type - just a curiosity at this point.
+
+```{r}
+od %>% count(payment_type) %>% arrange(desc(n))
+```
+    
+```{r}
+payment_type_data <-  od %>% group_by(year, week, payment_type) %>% 
+  summarize(
+    gross = sum(item_gross_amount),
+    orders = n_distinct(order),
+    .groups = "drop"
+  ) %>% 
+  mutate(
+    payment_type2 = case_when(
+      payment_type == "Credit Card" ~ "Credit",
+      payment_type == "Debit Card" ~ "Debit",
+      payment_type == "Cash" ~ "Cash",
+      TRUE ~ "Other"
+    ) %>% factor(levels = c("Credit", "Debit", "Cash", "Other"))
+  ) 
+```
+  
+```{r}
+payment_type_data %>% 
+  ggplot(aes(week, gross, color = payment_type2)) +
+  geom_point() + 
+  geom_smooth() + 
+  facet_wrap(~year) +
+  scale_y_continuous(
+    labels = scales::label_dollar(scale = 1e-3, suffix = "k")
+  ) +
+  labs(
+    main = "Gross Sales by Payment Types",
+    color = "Payment Type"
+  )
+```
+  
+```{r}
+payment_type_data %>% 
+  ggplot(aes(week, orders, color = payment_type2)) +
+  geom_point() + 
+  geom_smooth() + 
+  facet_wrap(~year) +
+  labs(
+    main = "Number of Orders by Payment Types",
+    color = "Payment Type"
+  )
+```
+
+
+
+
+# Miscellaneous Data Features
+
+## Discounts
+
+
+```{r}
+od %>% count( order_discount_names, sort = T )
+```
+
+## Refunds
+
+11 total refunds:
+
+- Are these returns? Below are the records of refunded orders
+- Omit from analysis?
+
+```{r}
+#od %>% count(refunded)
+```
+
+
+
+```{r}
+od %>% filter(refunded) %>% arrange(date)
+```
+
+
+## Notes
+
+Here is the notes field. Most from 2024. Assume no useful information here.
+
+```{r}
+od %>% count(note, year) %>% filter(!is.na(note)) %>%
+  arrange(year,desc(n))
+```

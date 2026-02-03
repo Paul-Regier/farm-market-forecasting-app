@@ -1,0 +1,301 @@
+---
+title: "Weather Discriminator Analysis"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+  pdf_document:
+    toc: true
+fontsize: 11pt
+---
+
+```{r}
+library(tidyverse)
+library(here)
+model_data <-  here("data","processed","date_metrics.rds") %>% read_rds()
+```
+
+
+# Data trends
+
+```{r}
+model_data %>% ggplot(aes(x = date, y = num_items, color = day_category_both, shape = Thanksgiving_weekend)) +
+  geom_point() +
+  facet_wrap(~year, scales = "free_x")
+```
+
+# Baseline Model
+
+Best baseline model found thus far
+
+Predicts number of items sold per day using:
+
+- spline smoothing for season_week (int)
+- day category factor
+- PYO strawberry indicator 
+- Thanksgiving weekend indicator
+
+I have improved this model to include interaction between day category and thanksgiving weekend. 
+
+```{r}
+library(splines)
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_both + PYO_strawberry + Thanksgiving_weekend:day_category_both,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+This is strong for a baseline traffic proxy:
+
+- Adj R² ≈ 0.81 → excellent for daily retail counts
+- Residual SE ≈ 310 items → reasonable given:
+- Saturdays add ~1200 items
+- Thanksgiving weekend adds 1500–2600 items
+- Seasonal spline terms are all meaningful 
+- Day-category effects are large, stable, and interpretable 
+- PYO effect is modest but significant
+
+
+## Residuals
+
+Logic:
+
+> Residuals = demand deviation after accounting for season + calendar
+
+
+Red - actual number items sold   
+Blue - predicted number of items
+
+e.g.:
+
+- in 2024, model **under-predicts** on Saturday before Thanksgiving
+- in 2025, model **over-predicts** on Saturday before Thanksgiving
+
+```{r}
+model_data <- model_data %>% mutate(
+  num_items_pred = predict(baseline_model, newdata = model_data),
+  num_items_residual = num_items - num_items_pred
+)
+
+plot_data <-  model_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "num_items"
+)
+
+plot_data %>% ggplot(aes(x = date, y = num_items, color = model, shape =  day_category_both)) +
+  geom_point(alpha = 0.8) + 
+  facet_wrap(~year, scales = "free_x")
+```
+
+**Note:** On extreme residual days (very high positive), some may be supply-constrained rather than demand-constrained.
+
+
+## Heteroscedasticity
+
+Interaction term (Thanksgiving:day_category_both) has balanced residuals for higher traffic days.
+
+```{r}
+ggplot(model_data, aes(num_items_pred, num_items_residual, color = day_category_both, shape = Thanksgiving_weekend)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Predicted records", y = "Residuals")
+```
+
+
+```{r}
+ggplot(model_data, aes(num_items_pred, num_items_residual, color = day_category_both, shape = PYO_strawberry)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Predicted records", y = "Residuals")
+```
+
+## Residuals by category
+
+
+```{r}
+model_data %>% ggplot(aes(x = num_items_residual, fill = day_category_both )) +
+  geom_boxplot()
+```
+
+```{r}
+model_data %>% ggplot(aes(x = num_items_residual, fill = PYO_strawberry )) +
+  geom_boxplot()
+```
+
+# Feature Engineering
+
+```{r}
+model_data <- model_data %>% mutate(
+  # Ternary Label
+  outcome_label = case_when(
+    num_items_residual <= quantile(num_items_residual, 0.25) ~ "bad_day",
+    num_items_residual >= quantile(num_items_residual, 0.75) ~ "good_day",
+    TRUE ~ "neutral",
+  ) %>% factor(levels = c("bad_day", "neutral", "good_day")),
+  # Binary Labels
+  good_day = outcome_label == "good_day",
+  bad_day = outcome_label == "bad_day",
+    # Weather flags
+  extreme_temp_flag = (max_temp_c < 12 | max_temp_c > 32), # 53.6-89.6 degrees F
+  weather_flag = (precip_flag | high_wind_flag | extreme_temp_flag),
+  neutral_flag = (high_wind_flag & extreme_temp_flag),
+  # Final Weather Category
+  weather_category = case_when(
+    precip_flag ~ "bad_weather",
+    (!high_wind_flag & !extreme_temp_flag) ~ "good_weather",
+    TRUE ~ "neutral_weather"
+  ) %>% factor(levels = c("bad_weather","neutral_weather","good_weather"))
+)
+```
+
+```{r}
+model_data %>% count(weather_category)
+```
+
+```{r}
+writexl::write_xlsx(model_data,here("data","model","model_data_viewing.xlsx"))
+```
+
+
+# Ordinal Regression
+
+
+```{r}
+# Baseline comparison
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+```{r}
+# add extreme temp
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag + extreme_temp_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+```{r}
+# add wind flag
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag + high_wind_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+```{r}
+# Recommended Fit
+ord_fit <- MASS::polr(
+  outcome_label ~ weather_category,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+This gives basis for using the following indicators for categorizing weather
+
+- rain -> bad weather
+- no high winds, no extreme temps -> good weather  
+- high winds and/or extreme temps -> neutral weather  
+
+
+
+
+
+# Write data for next step - determining order multipliers
+
+```{r}
+write_rds(model_data, here("data","model","model_data_2.2.rds"))
+```
+
+```{r}
+# For next steps
+model_data <- here("data","model","model_data_2.2.rds") %>% read_rds()
+```
+
+
+
+```{r}
+# Recommended Fit
+ord_fit <- MASS::polr(
+  outcome_label ~ weather_category,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+
+
+# 2026 Baseline Predictions
+
+```{r}
+library(splines)
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_both + PYO_strawberry + Thanksgiving_weekend:day_category_both,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+
+```{r}
+category_levels <- c(
+        "Weekday",
+        "Saturday",
+        "PA_day",
+        "Holiday",
+        "Near_Holiday",
+        "Sat_Holiday_Weekend"
+)
+
+cal = here("data","calendar","cal.rds") %>% read_rds()
+pred_2026 <- cal %>% 
+  dplyr::select(year, date, season_week, day_category_both, PYO_strawberry, Thanksgiving_weekend) %>% 
+  mutate(
+    day_category_both = case_when(
+      day_category_both == "CLOSED" ~ NA,
+      TRUE ~ day_category_both
+    ) %>% factor(levels = category_levels)
+  )
+
+
+pred_2026 <- pred_2026 %>% mutate(
+  num_items_pred = predict(baseline_model, newdata = pred_2026)
+)
+write_rds(pred_2026, here("data","model","pred_2026.rds"))
+```
+
+```{r}
+# for next step
+pred_2026 <- here("data","model","pred_2026.rds") %>% read_rds()
+```
+
+
+
+
+

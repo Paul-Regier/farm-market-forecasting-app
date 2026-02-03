@@ -1,0 +1,252 @@
+---
+title: "Weather Discriminator Analysis"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+  pdf_document:
+    toc: true
+fontsize: 11pt
+---
+
+```{r}
+library(tidyverse)
+library(here)
+model_data <- here("data","processed","date_metrics.rds") %>% read_rds()
+```
+
+```{r}
+model_data %>% count(day_category_Toronto)
+model_data %>% count(day_category_York)
+```
+```{r}
+model_data %>% filter(day_category == "CLOSED")
+```
+# Data trends
+
+
+
+# Baseline Model
+
+
+
+## Step 1: Define baseline expected sales
+
+Outcome-anchored residual approach
+
+
+Fit a baseline model without weather:
+
+baseline_model:
+gross_sales ~ week_of_season + day_category
+
+
+(or same for transaction_count)
+
+
+gross_sales ~ season_week + day_category
+
+
+### Model 1
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    gross ~ ns(season_week, df = 4) + day_category,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+### Model 2
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    gross ~ ns(season_week, df = 3) + day_category_Toronto,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    gross ~ ns(season_week, df = 3) + day_category_Toronto + PYO_strawberry,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+### Model 3
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    gross ~ ns(season_week, df = 3) + day_category_York,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    gross ~ ns(season_week, df = 3) + day_category_York + PYO_strawberry,
+    data = model_data
+  )
+summary(baseline_model)
+```
+### Model 4
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_Toronto,
+    data = model_data
+  )
+summary(baseline_model)
+```
+### Model 5
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_York,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+
+## Step 2: Compute residuals
+
+Use Model 4
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 5) + day_category_Toronto + PYO_strawberry,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+> residual = observed_sales - expected_sales
+
+```{r}
+model_data <- model_data %>% mutate(
+  num_items_pred = predict(baseline_model, newdata = model_data),
+  residuals = num_items - num_items_pred
+)
+
+plot_data <-  model_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "total_num_items"
+)
+```
+
+```{r}
+plot_data %>% ggplot(aes(x = date, y = total_num_items, color = model, shape =  day_category_Toronto)) +
+  geom_point() + 
+  facet_wrap(~year, scales = "free_x")
+```
+
+```{r}
+model_data %>% ggplot(aes(x = day_category_Toronto, y = residuals)) +
+  geom_boxplot()
+```
+
+
+
+```{r}
+library(ggplot2)
+
+ggplot(model_data, aes(num_items_pred, residuals)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Predicted Number of Items/Day", y = "Residuals")
+
+```
+
+
+
+
+Step 3: Label outcomes  
+bad_day  = residual <= quantile(residual, 0.25)  
+good_day = residual >= quantile(residual, 0.75)  
+
+
+Weather is a discriminator of underperformance, not raw sales.
+
+This avoids:
+Saturday bias
+
+Holiday effects
+
+
+
+
+
+# Model with Weather
+
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_Toronto,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+> residual = observed_sales - expected_sales
+
+```{r}
+model_data <- model_data %>% mutate(
+  num_items_pred = predict(baseline_model, newdata = model_data),
+  residuals = num_items - num_items_pred
+)
+```
+
+
+```{r}
+plot_data <-  model_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "total_num_items"
+)
+```
+
+```{r}
+plot_data %>% ggplot(aes(x = date, y = total_num_items, color = model )) +
+  geom_point() + 
+  facet_wrap(~year, scales = "free_x")
+```

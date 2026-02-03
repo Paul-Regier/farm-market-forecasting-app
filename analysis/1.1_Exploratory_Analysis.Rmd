@@ -1,0 +1,160 @@
+---
+title: "Market General Reports"
+subtitle: "2024-2025 Seasons"
+author: ""
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r warning=FALSE}
+library(tidyverse)
+library(here)
+
+d   <- here("data","raw","od_raw.rds") %>% read_rds()
+cal <- here("data","calendar","cal.rds") %>% read_rds()
+category <- here("data","item_counts_categorized3.xlsx") %>% readxl::read_xlsx()
+```
+
+# Raw order data
+
+```{r}
+#glimpse(d)
+colnames(d)
+```
+
+
+# Number of Orders by Category
+
+```{r}
+d %>% count(category, sort = T)
+```
+
+```{r}
+d %>% 
+  count(category, sort = TRUE) %>% 
+  ggplot(aes(x = reorder(category, n), y = n)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    x = "Category",
+    y = "Count",
+    title = "Counts by Category"
+  ) +
+  scale_y_continuous(
+    labels = scales::label_number(scale = 1/1000, suffix = "k")
+  ) +
+  geom_col(fill = "#4C72B0") +
+  theme_minimal()
+```
+
+> Recommendation: categorize more items for more targeted analysis in the future.
+
+
+## Model Data
+
+**Key variables:**
+
+- order = one transaction with one customer
+- item_name = singular item, entered multiple times/per order if multiple of one item purchased
+- item_price = price for one item
+- category = 
+
+```{r}
+model_data <- d %>% select(
+  date, week, hour, daypart, payment_time, 
+  item_name, category,
+  item_price,
+  order_amount, 
+  ## Order_no_of_items
+)
+glimpse(model_data)
+```
+
+
+## Item sales by date
+
+Group by date and item_name
+
+```{r}
+totals_by_date <- d %>% group_by( date, item_name) %>% 
+  summarise(
+    amt = n(),
+    total_sales = sum(item_price),
+    .groups = "drop"
+  ) %>% left_join( category %>% select(-n), by = "item_name")
+```
+```{r}
+glimpse(totals_by_date %>% filter( bakery == "T"))
+```
+```{r}
+bakery_items <- totals_by_date %>%
+  filter( bakery == "T" ) %>%
+  group_by(date, bakery_type) %>% 
+  summarize(
+    amt = sum(amt),
+    total_sales = sum(total_sales),
+    .groups = "drop"
+  ) %>% 
+  mutate(
+    year = year(date)
+  )
+glimpse(bakery_items)
+```
+
+
+```{r}
+bakery_items %>% ggplot(aes(x = date, y = total_sales, col = bakery_type)) + 
+  geom_line(linewidth = 0.5, alpha = 0.5) +
+  geom_smooth() +
+  labs(
+    x = NULL,
+    y = "sales/day",
+    color = "Bakery type",
+    title = "Total Sales of Bakery Items"
+  ) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  theme_minimal() +
+  facet_wrap(~year, scales = "free_x")
+```
+
+
+```{r}
+bakery_items %>% ggplot(aes(x = date, y = amt, col = bakery_type)) + 
+  geom_line(linewidth = 0.5, alpha = 0.5) +
+  geom_smooth() +
+  labs(
+    x = NULL,
+    y = "Items sold",
+    color = "Bakery type",
+    title = "Number of bakery items sold by year"
+  ) +
+  theme_minimal() +
+  facet_wrap(~year, scales = "free_x")
+
+```
+
+
+
+```{r}
+bakery_items %>% 
+  ggplot(aes(date, amt, color = factor(year))) +
+  geom_line(linewidth = 0.5) +
+  facet_wrap(~ bakery_type, scales = "free_x") +
+  theme_minimal()
+```
+
+
+
+## Group by transaction, date, and item
+
+Include order total

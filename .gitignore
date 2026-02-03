@@ -1,0 +1,17 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.Rhistory
+.Rproj.user/
+.vscode/
+
+# Secrets
+.secrets/
+*.key
+*.json
+
+# Data (raw / sensitive)
+data/processed/
+data/raw/
+data/model/
+analysis/item_data.rds

@@ -1,0 +1,240 @@
+---
+title: "Bakery Order Model"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r warning=FALSE}
+library(tidyverse)
+library(MASS)
+library(splines)
+library(here)
+model_data = here("data","model","model_data_2.3.rds") %>% read_rds()
+bakery_data = here("data","processed","bakery_totals_by_date.rds") %>% read_rds() %>% 
+  mutate(
+    month_day = as.Date(paste0("2000-", format(date, "%m-%d"))),
+    last_sale_min_to_close_cat = case_when(
+      last_sale_min_to_close < 100 ~ "<100",
+      last_sale_min_to_close < 200 ~ "100-200",
+      last_sale_min_to_close < 300 ~ "200-300",
+      TRUE ~ ">300"
+    ) %>% factor(levels = c("<100","100-200","200-300",">300")),
+    sold_out_flag = last_sale_min_to_close >= 300
+  )
+```
+
+
+
+# Model A1 - Prior Final Model
+
+With interaction term for thanksgiving
+
+```{r}
+final_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 3) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type +
+      sold_out_flag +
+      sold_out_flag:bakery_type +
+      bakery_type:Thanksgiving_weekend, ## PIES!!!
+    data = bakery_data
+  )
+summary(final_model_nb)
+```
+
+AIC = 7179.5
+
+## Residuals
+
+```{r}
+# update Residuals
+bakery_data <- bakery_data %>%
+  mutate(
+    num_items_pred = predict(
+      final_model_nb,      # replace with your model object name
+      newdata = bakery_data,
+      type = "response"  # IMPORTANT: mean count, not log-scale
+    ),
+    resid_nb = residuals(final_model_nb, type = "pearson"), # Variance-Standardized
+    num_items_residual = num_items - num_items_pred # raw residuals
+  ) %>% relocate( num_items, .before = num_items_pred)
+```
+
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    ) +
+  scale_y_continuous(breaks = scales::pretty_breaks())
+```
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    ) +
+  scale_x_continuous(limits = c(0,100)) +
+  scale_y_continuous(breaks = scales::pretty_breaks())
+```
+
+
+
+
+## Residuals by Bakery Type
+
+
+```{r}
+plot_data <-  bakery_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "num_items"
+)
+```
+
+```{r}
+type_names = bakery_data$bakery_type %>% unique()
+plots <- vector("list",5)
+residuals <- vector("list",5)
+
+for (i in 1:5) {
+  type = type_names[i]
+
+  residuals[[i]] <- ggplot(bakery_data,
+         aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth() +
+    labs(
+      title = paste0(type, " - Standardized Residuals vs. Fitted Values")
+    ) +
+    scale_y_continuous(breaks = scales::pretty_breaks())
+  print(residuals[[i]])
+  
+  plots[[i]] <- plot_data %>% filter(bakery_type == type) %>% ggplot(aes(x = date, y = num_items, color = model, 
+                                                           shape =  day_category_both, 
+                                                           alpha = last_sale_min_to_close_cat )) +
+    scale_alpha_manual(values = c("<100" = 0.3, "100-200" = 0.5, "200-300" = 0.70, ">300" = 1)) +
+    geom_point() +
+    facet_wrap(~year, scales = "free_x") +
+    labs(
+      title = paste0(type," - Prediction vs Actual Sales"),
+      y = "number of items",
+      x = "date"
+    )
+  print(plots[[i]])
+}
+
+```
+
+
+
+# Model A2
+
+AIC = 7169
+
+```{r}
+7179.5 - 7169
+```
+
+
+With interaction term for seasonality
+
+```{r}
+final_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2)*bakery_type +
+      ns(season_week, df = 3) +
+      day_category_both +
+      PYO_strawberry +
+      sold_out_flag*bakery_type +
+      bakery_type*Thanksgiving_weekend, ## PIES!!!
+    data = bakery_data
+  )
+summary(final_model_nb)
+```
+
+
+
+
+
+## Residuals
+
+
+
+```{r}
+# update Residuals
+bakery_data <- bakery_data %>%
+  mutate(
+    num_items_pred = predict(
+      final_model_nb,      # replace with your model object name
+      newdata = bakery_data,
+      type = "response"  # IMPORTANT: mean count, not log-scale
+    ),
+    resid_nb = residuals(final_model_nb, type = "pearson"), # Variance-Standardized
+    num_items_residual = num_items - num_items_pred # raw residuals
+  ) %>% relocate( num_items, .before = num_items_pred)
+```
+
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    ) +
+  scale_y_continuous(breaks = scales::pretty_breaks())
+```
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    ) +
+  scale_x_continuous(limits = c(0,100)) +
+  scale_y_continuous(breaks = scales::pretty_breaks())
+```
+
+# Conclusion
+
+Choose Model A1 
+
+Both are good:
+
+- Residuals well-behaved across bakery types
+- Seasonal effects shared in shape
+- Lower variance, simpler deployment
+
+But A1 is operationally more coherent. Interaction gains are incremental, not structural
+
+Choose Model A1 
+
+
+
+against Model B.
+
+
+
+

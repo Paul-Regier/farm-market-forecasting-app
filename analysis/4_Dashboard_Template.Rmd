@@ -1,0 +1,415 @@
+---
+title: "Dashboard Template"
+subtitle: ""
+author: ""
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r}
+library(tidyverse)
+library(here)
+
+model_data <- here("data","model","model_data_2.3.rds") %>% read_rds()
+pred_2026 <- here("data","model","pred_2026.rds") %>%  read_rds() %>% filter( year == "2026")
+
+week_metrics_by_category <- here("data","processed","week_metrics_by_category.rds") %>% read_rds()
+week_metrics <- here("data","processed","week_metrics.rds") %>% read_rds()
+bakery_data <- here("data","processed","bakery_totals_by_date.rds") %>% read_rds()
+```
+
+
+    
+# Overview 
+
+Historical and predicted number of items sold for a given time period [month_selection] default June
+
+- This provides reasonable (and I think, so far best) proxy for overall traffic
+- May be used for projecting
+    + staffing
+    + weekly orders
+
+
+
+Below predicted items sold per day, week, and month.
+
+```{r}
+week_labels = pred_2026 %>%  group_by(season_week) %>% 
+  summarize( 
+    start_date = min(date),
+    .groups = "drop"
+  ) %>% mutate(
+    date_md = str_sub(start_date, 6),
+    week_label = paste("week", season_week, "-", date_md)
+  )
+#glimpse(week_labels)
+```
+
+
+
+
+## Predicted and Actual Number of Items Sold by day
+
+```{r}
+years = paste(2024:2026)
+#pred_2026 %>% glimpse()
+data_2026_pred <- pred_2026 %>% rename(
+  num_items = num_items_pred
+) %>% mutate(
+  data_type = "Pred" %>% factor(levels = c("Actual","Pred")),
+  year = year %>% factor(levels = years)
+)
+
+data_pre2026_actual <- model_data %>%
+  select(year, date, season_week, day_category_both, PYO_strawberry, Thanksgiving_weekend, num_items_pred) %>%
+  rename(
+    num_items = num_items_pred
+  ) %>% mutate(
+    data_type = "Pred" %>% factor(levels = c("Actual","Pred")),
+    year = year %>% factor(levels = years)
+  )
+data_pred2026_pred <- model_data %>%
+  select(year, date, season_week, day_category_both, PYO_strawberry, Thanksgiving_weekend, num_items) %>% 
+  mutate(
+    data_type = "Actual" %>% factor(levels = c("Actual","Pred")),
+    year = year %>% factor(levels = years)
+  )
+
+data_comb <- rbind(
+  data_2026_pred, data_pre2026_actual, data_pred2026_pred
+) %>% mutate(
+  month_day = as.Date(paste0("2000-", format(date, "%m-%d"))),
+  percent_rank = percent_rank(num_items),
+  items_rel_to_median = num_items/1180.00
+)
+```
+
+
+### Number items sold
+
+```{r}
+data_comb %>% ggplot(aes(x = date, 
+                         y = num_items, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = .9)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~year, scales = "free_x") +
+    labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "number items sold/day"
+  )
+```
+
+### Relative to Median
+
+```{r}
+data_comb %>% ggplot(aes(x = date, 
+                         y = items_rel_to_median, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = .9)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~year, scales = "free_x") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "traffic relative to median"
+  )
+```
+
+### All together
+
+Not as useful - too crazy
+
+Shows shifting of dates back by one day each year
+
+```{r}
+data_comb %>% ggplot(aes(x = month_day, 
+                         y = num_items, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = 0.9)) +
+  scale_x_date(
+    breaks = seq(as.Date("2000-06-01"), max(data_comb$month_day), by = "1 week"),
+    date_labels = "%m-%d"
+  ) +
+  #geom_smooth(aes(group = 1),color = "grey", se = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "number items sold/day"
+  )
+```
+
+
+
+
+## Zoom in by week
+
+E.g. weeks 1-10
+
+```{r}
+model_data$num_items %>% quantile()
+```
+0% - lowest traffic day
+100% - 
+```{r}
+default_min = 1
+default_max = 2
+week_min = week_labels$season_week[default_min]
+week_max = week_labels$season_week[default_max]
+
+data_comb_filter <- data_comb %>% filter( season_week >= week_min &
+                      season_week <= week_max )
+```
+
+
+### Number of Items Sold
+
+```{r}
+data_comb_filter %>% filter(
+  year == "2026" |
+  (year != "2026" & data_type == "Actual")
+) %>% ggplot(aes(x = month_day, 
+                         y = num_items, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = 0.9)) +
+  scale_x_date(
+    breaks = seq(as.Date("2000-06-01"), max(data_comb$month_day), by = "1 week"),
+    date_labels = "%m-%d"
+  ) +
+  #geom_smooth(aes(group = 1),color = "grey", se = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "number items sold/day"
+  )
+```
+
+
+### Relative to Median
+
+This is one that seems most useful to me
+
+```{r}
+data_comb_filter %>% ggplot(aes(x = date, 
+                         y = items_rel_to_median, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = .9)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~year, scales = "free_x") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "traffic relative to median"
+  )
+```
+
+
+## Zoom in by week - Relative to median
+
+E.g. weeks 1-10
+
+```{r}
+model_data$num_items %>% quantile()
+```
+
+0% - lowest traffic day
+100% - Average day
+400% - 4x average
+
+
+```{r}
+default_min = 1
+default_max = 2
+week_min = week_labels$season_week[default_min]
+week_max = week_labels$season_week[default_max]
+
+data_comb_filter <- data_comb %>% filter( season_week >= week_min &
+                      season_week <= week_max )
+```
+
+
+
+```{r}
+data_comb_filter %>% ggplot(aes(x = date, 
+                         y = items_rel_to_median, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = .9)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~year, scales = "free_x") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "traffic relative to median"
+  )
+
+```
+
+
+
+```{r}
+data_comb_filter %>% filter(
+  year == "2026" |
+  (year != "2026" & data_type == "Actual")
+) %>% ggplot(aes(x = month_day, 
+                         y = num_items, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = 0.9)) +
+  scale_x_date(
+    breaks = seq(as.Date("2000-06-01"), max(data_comb$month_day), by = "1 week"),
+    date_labels = "%m-%d"
+  ) +
+  #geom_smooth(aes(group = 1),color = "grey", se = F) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "number items sold/day"
+  )
+```
+
+
+
+```{r}
+data_comb %>% ggplot(aes(x = date, 
+                         y = items_rel_to_median, 
+                         color = year, 
+                         shape = day_category_both, 
+                         alpha = data_type)) +
+  geom_point() +
+  scale_alpha_manual(values = c(Actual = 0.3, Pred = .9)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~year, scales = "free_x") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(
+    x = "",
+    title = "Actual and Predicted Sales by Year",
+    y = "traffic relative to median"
+  )
+```
+
+
+## Weekly Metrics?
+
+
+
+### Number of Items
+
+```{r}
+week_metrics %>% ggplot(aes(season_week, num_orders, color = year)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 22, by = 2)) +
+  labs(
+    title = "Total number of Orders per Week",
+    y = "Number of Orders",
+    x = "Weak of Season"
+  )
+```
+
+### Number of Orders
+
+```{r}
+week_metrics %>% ggplot(aes(season_week, num_items, color = year)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 22, by = 2)) +
+  labs(
+    title = "Total Number of Items per Week",
+    y = "Number of Items",
+    x = "Weak of Season"
+  )
+```
+
+### Gross
+
+```{r}
+week_metrics %>% ggplot(aes(season_week, gross/1000, color = year)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 22, by = 2)) +
+  labs(
+    title = "Total number of Orders per Week",
+    y = "Gross (k$)",
+    x = "Weak of Season"
+  )
+```
+
+
+
+# Bakery Orders
+
+Predictions for a given day [day_selection] default June 4
+
+I. Weather prediction summary:
+
+- rainy = T/F
+- extreme temp = T/F (outside 12-32 degrees C)
+- high wind = T/F
+- Category: good_weather, neutral_weather, or bad_weather
+
+II. Order Summary:
+
+(predicted baseline, predicted bad_day, predicted good_day, current overstock, recommended order) vs (type of bakery product)
+
+
+III. Historical sales:
+
+[week_selection] default to day_selection when day selection changes
+
+Overview of historical sales surrounding that day (+1 week), with vertical line marking given day_selection.
+
+
+
+# Produce
+
+Historical and predicted number of items sold per week by produce item by given range of weeks, given
+[week_selection_start] to [week_selection_end]
+
+Items sold per week given range of weeks.
+Default: [week_selection = minimum] to [week_selection + 4]
+
+```{r}
+
+```
+
+
+
+
+produce 
+
+
+

@@ -1,0 +1,134 @@
+---
+title: "Bakery Order Model"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+```{r}
+library(tidyverse)
+library(MASS)
+library(splines)
+library(here)
+model_data <- here("data","model","model_data_2.3.rds") %>% read_rds()
+bakery_data <- here("data","processed","bakery_totals_by_date.rds") %>% read_rds() %>% 
+  mutate(
+    month_day = as.Date(paste0("2000-", format(date, "%m-%d"))),
+    last_sale_min_to_close_cat = case_when(
+      last_sale_min_to_close < 180 ~ "<180",
+      last_sale_min_to_close < 300 ~ "180-300",
+      TRUE ~ ">300"
+    ) %>% factor(levels = c("<180","180-300",">300")),
+    sold_out_flag = last_sale_min_to_close >= 300
+  )
+```
+
+# Final Model
+
+    num_items ~ 
+            ns(season_week, df = 3) +
+            day_category_both +
+            PYO_strawberry +
+            Thanksgiving_weekend +
+            Thanksgiving_weekend:day_category_both +
+            sold_out_flag
+
+# Individual Models
+
+5 independent models
+
+```{r}
+type_names = bakery_data$bakery_type %>% unique()
+plots <- vector("list",5)
+summaries <- vector("list",5)
+residuals <- vector("list",5)
+
+for (i in 1:5) {
+  
+  type = type_names[i]
+  
+  bakery_data_ind = bakery_data %>% filter( bakery_type == type )
+  final_model_nb_ind <-
+    glm.nb(
+      num_items ~ 
+        ns(season_week, df = 3) +
+        day_category_both +
+        PYO_strawberry +
+        Thanksgiving_weekend +
+        Thanksgiving_weekend:day_category_both +
+        sold_out_flag,
+      data = bakery_data_ind
+    )
+  summaries[[i]] = summary(final_model_nb_ind)
+  #print(summaries[[i]])
+  
+  bakery_data_ind <- bakery_data_ind %>%  mutate(
+    num_items_pred = predict(
+      final_model_nb_ind,      # replace with your model object name
+      newdata = bakery_data_ind,
+      type = "response"  # IMPORTANT: mean count, not log-scale
+    ),
+    resid_nb = residuals(final_model_nb_ind, type = "pearson"), # Variance-Standardized
+    num_items_residual = num_items - num_items_pred # raw residuals
+  ) %>% relocate( num_items, .before = num_items_pred)
+  
+  # # residuals
+  # residuals[[i]] <- ggplot(bakery_data_ind,
+  #        aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  #   geom_point(alpha = 0.5) +
+  #   geom_smooth() +
+  #   labs(
+  #     title = paste0(type, " - Standardized Residuals vs. Fitted Values")
+  #   ) +
+  #   scale_y_continuous(breaks = scales::pretty_breaks())
+  # print(residuals[[i]])
+  
+  plot_data <-  bakery_data_ind %>% pivot_longer(
+    cols = c(num_items_pred, num_items),
+    names_to = "model",
+    values_to = "num_items"
+  )
+  
+  
+  plots[[i]] <- plot_data %>% filter(bakery_type == type) %>% 
+    ggplot(aes(x = date, y = num_items, color = model, 
+               shape =  day_category_both, 
+               alpha = last_sale_min_to_close_cat )) +
+    scale_alpha_manual(values = c("<180" = 0.4, "180-300" = 0.6, ">300" = 1)) +
+    scale_color_manual(
+      values = c(num_items = "black", num_items_pred = "blue"),
+      labels = c(num_items = "Actual", num_items_pred = "Predicted")
+    ) +
+    geom_point() +
+    facet_wrap(~year, scales = "free_x") +
+    labs(
+      title = paste0(type," - Prediction vs Actual Sales"),
+      y = "number of items",
+      x = "date",
+      alpha = "Last Sale (min before close)",
+      color = "",
+      shape = "Day Category"
+    )
+  print(plots[[i]])
+}
+
+```

@@ -1,0 +1,12 @@
+name: R-market-forecasting-app
+title: R-market-forecasting-app
+username: paulsshinyapps
+account: paulsshinyapps
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16586472
+bundleId: 11533650
+url: https://paulsshinyapps.shinyapps.io/R-market-forecasting-app/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

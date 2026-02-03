@@ -1,0 +1,191 @@
+---
+title: "Weather Discriminator Analysis"
+subtitle: "Order Multipliers"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r warning=FALSE}
+library(tidyverse)
+library(here)
+model_data <- here("data","model","model_data_2.2.rds") %>% read_rds()
+```
+
+# Recommended Fit
+
+
+```{r}
+# Recommended Fit
+ord_fit <- MASS::polr(
+  outcome_label ~ weather_category,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+# Inspection
+
+## Outcome Labels
+
+```{r}
+model_data %>% count(weather_category, outcome_label) %>% 
+  pivot_wider(
+    names_from = outcome_label, values_from = n
+  )
+```
+
+```{r}
+with(model_data,
+     mosaicplot(table(weather_category, outcome_label),
+                main = "Weather Category vs Outcome Label",
+                col = c(bad = "red", neutral = "grey70", good = "steelblue"),
+                shade = TRUE))
+```
+Recommendations: 
+
+- Effect of **bad_weather** (to predict bad_day = lower sales), on sales is **more reliable**. 
+    + Why? large number of bad days with bad weather, more than you would expect due to chance.
+- Effect of **good_weather** (to predict good_day = higher sales) on sales is **less reliable.**
+    + Why? large number of good_weather days with with neutral outcome (average sales)
+  
+  
+## Weather and day categories
+
+```{r}
+with(model_data,
+     mosaicplot(table(day_category_both, weather_category),
+                main = "Weather Category vs Outcome Label",
+                col = c(bad = "red", neutral = "grey70", good = "steelblue"),
+                shade = TRUE, 
+                las = 2))
+```
+
+## Distribution of num_items by weather_category
+
+```{r}
+model_data %>% ggplot(aes(x = num_items, fill = weather_category)) +
+  geom_histogram(color = "black", bins = 30) + 
+  facet_wrap(~weather_category)
+```
+
+```{r}
+model_data %>% ggplot(aes(x = num_items, fill = outcome_label)) +
+  geom_histogram(color = "black", bins = 30) + 
+  facet_wrap(~outcome_label)
+```
+
+So many good_weather days end up being neutral sales days.
+
+
+# Multipliers
+
+**Goal:** empirically determine multipliers for good, neutral, and bad weather days.
+
+
+## Mean-based multipliers
+
+```{r}
+exp_items <- mean(model_data$num_items)
+exp_items
+exp_hat <- mean(model_data$num_items_pred)
+exp_hat
+
+order_multipliers <- model_data %>% group_by(weather_category) %>% 
+  summarize(
+    m_residuals = mean(num_items_residual),
+    m_num_items = mean(num_items),
+    m_num_items_hat = mean(num_items_pred),
+    .groups = "drop"
+  ) %>% mutate(
+    multiplier_data = m_num_items/exp_items,
+    multiplier_hat  = m_num_items_hat/exp_hat
+  ) %>% relocate(
+    multiplier_data, .after = m_num_items
+  )
+order_multipliers
+```
+
+No go because of data skew
+
+
+
+## Median-based multipliers
+
+Not recommended
+
+```{r}
+exp_items <- median(model_data$num_items)
+exp_items
+exp_hat <- median(model_data$num_items_pred)
+exp_hat
+
+order_multipliers <- model_data %>% group_by(weather_category) %>% 
+  summarize(
+    m_residuals = median(num_items_residual),
+    m_num_items = median(num_items),
+    m_num_items_hat = median(num_items_pred),
+    .groups = "drop"
+  ) %>% mutate(
+    multiplier_data = m_num_items/exp_items,
+    multiplier_hat  = m_num_items_hat/exp_hat
+  ) %>% relocate(
+    multiplier_data, .after = m_num_items
+  )
+order_multipliers
+```
+
+
+
+## Ratio of Sums (exposure-weighted mean)
+
+
+
+```{r}
+multipliers <- model_data %>% group_by(weather_category) %>% 
+  summarize(
+    multiplier = (sum(num_items) / sum(num_items_pred)) %>% round(3)
+  )
+multipliers
+```
+
+
+Why this is appropriate:
+
+- Immune to single-day spikes dominating category means (e.g. Thanksgiving)
+- Preserves total volume (critical for ordering)
+- Aligns perfectly with your baseline model
+- Standard practice in demand planning & actuarial work
+
+
+# Final Mutliplier Recommendations
+
+Based on ration of sums multipliers:
+
+- For good weather days: use +7% order adjustment, to be used conservatively 
+- For neutral weather days: use +4% order adjustment, to be used for extreme temps (projected high outside 12-32 degrees C) or extreme winds
+- For bad weather days: use -10% order adjustment, to be used when high chance of rain
+
+Note on *neutral weather* terminology. Is not really neutral. Just not great. Open to suggestions.
+
+
+
+
+
+```{r}
+multipliers <- model_data %>% group_by(weather_category) %>% 
+  summarize(
+    multiplier = (sum(num_items) / sum(num_items_pred)) %>% round(2)
+  )
+multipliers
+```

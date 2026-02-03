@@ -1,0 +1,22 @@
+# Large data
+data/raw/
+data/archive/
+*.csv
+*.xlsx
+
+# Models / caches
+models/
+_cache/
+*.rds
+
+# Analysis
+analysis/
+
+# Git / IDE
+.git/
+.Rproj.user/
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db

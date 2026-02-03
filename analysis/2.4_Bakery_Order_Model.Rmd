@@ -1,0 +1,531 @@
+---
+title: "Bakery Order Model"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+```{r warning=FALSE}
+library(tidyverse)
+library(MASS)
+library(splines)
+library(here)
+model_data <- here("data","model","model_data_2.3.rds") %>% read_rds()
+bakery_data <- here("data","processed","bakery_totals_by_date.rds") %>% read_rds() %>% 
+  mutate(
+    month_day = as.Date(paste0("2000-", format(date, "%m-%d"))),
+    last_sale_min_to_close_cat = case_when(
+      last_sale_min_to_close < 100 ~ "<100",
+      last_sale_min_to_close < 200 ~ "100-200",
+      last_sale_min_to_close < 300 ~ "200-300",
+      TRUE ~ ">300"
+    ) %>% factor(levels = c("<100","100-200","200-300",">300"))
+  )
+```
+
+# Multipliers
+
+```{r}
+multipliers <- model_data %>% group_by(weather_category) %>% 
+  summarize(
+    multiplier = (sum(num_items) / sum(num_items_pred)) %>% round(2)
+  )
+multipliers
+```
+
+# Data Overview
+
+## Number of items per day by category
+
+
+```{r}
+bakery_data %>% ggplot(aes(date, num_items, color = bakery_type)) +
+  geom_point(alpha = 0.3) +
+  geom_line() +
+  facet_grid(bakery_type ~ year, scales = "free")
+```
+
+## Raw counts
+
+
+```{r}
+bakery_data %>% count(bakery_type, weekday) %>% 
+  pivot_wider(
+    names_from = weekday,
+    values_from = n
+  )
+```
+
+```{r}
+bakery_data %>% count(bakery_type, year) %>% 
+  pivot_wider(
+    names_from = year,
+    values_from = n
+  )
+
+```
+
+
+```{r}
+bakery_data %>% group_by(bakery_type) %>% 
+  summarize(
+    ave_per_day = mean(num_items),
+    st_per_day = sd(num_items),
+    total = n()
+  )
+```
+
+```{r}
+bakery_data %>% group_by(day_category_both) %>% 
+  summarize(
+    ave_per_day = mean(num_items),
+    st_per_day = sd(num_items),
+    total = n()
+  )
+```
+
+## Plot of Num_items by type
+
+```{r}
+bakery_data %>% ggplot(aes(date, num_items, color = day_category_both)) +
+  geom_point(alpha = 0.3, size = 0.5) +
+  facet_wrap(~year, scales = "free", ncol = 1) 
+```
+
+```{r}
+bakery_data %>% ggplot(aes(month_day, num_items, color = day_category_both, shape = year)) +
+  geom_point(alpha = 0.3, size = 0.8) +
+  facet_wrap(~year, scales = "free", ncol = 1) +
+  scale_y_continuous(limits = c(0,100))
+  
+```
+
+## Raw distributions
+
+```{r}
+bakery_data %>% ggplot(aes(num_items, fill = day_category_both)) +
+  geom_histogram(color = "black") +
+  facet_wrap(~bakery_type, scales = "free_x")
+```
+
+
+# Next steps
+
+1. make baseline model with out last_sale_min_to_close using all bakery items
+
+2. plot residuals vs last_sale_min_to_close - see where cut off is to define sold_out_flag (probable)
+
+3. finalize base model with all bakery items using sold_out_flag
+
+4. Define individual models - Muffins, Multigrain, Pie, Pilgrim, Specialty
+
+
+# Models
+
+Baseline will use Negative Binomial GLM on all bakery items
+
+- glm.nb() → handles overdispersion automatically
+- bakery_type → absorbs scale differences across items
+- No sold-out variable yet → clean baseline
+- Same seasonal structure you already validated
+
+## Baseline
+
+```{r}
+library(MASS)
+library(splines)
+
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type,
+    data = bakery_data
+  )
+
+summary(baseline_model_nb)
+
+```
+
+
+## Cleaned categories
+
+No go
+
+Lower AIC
+
+```{r}
+library(MASS)
+library(splines)
+
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_cleaned +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type,
+    data = bakery_data
+  )
+
+summary(baseline_model_nb)
+
+```
+
+## Baseline Residuals
+
+
+```{r}
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type,
+    data = bakery_data
+  )
+
+bakery_data <- bakery_data %>%
+  mutate(
+    resid_nb = residuals(baseline_model_nb, type = "pearson"),
+    sold_out_flag = last_sale_min_to_close >= 300
+  )
+```
+
+
+```{r}
+ggplot(bakery_data,
+       aes(last_sale_min_to_close, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth()
+```
+
+This graph shows good basis to use 300 minutes (5 hours before close) for last sale as evidence for selling out.
+
+Scree test - notice elbow in curve
+
+```{r}
+bakery_data %>% count(bakery_type, sold_out_flag) %>% 
+  pivot_wider(
+    names_from = bakery_type,
+    values_from = n
+  )
+```
+
+QUestion for John: 
+
+- Do these numbers track?
+
+
+
+
+```{r}
+ggplot(bakery_data,
+       aes(last_sale_min_to_close, resid_nb, color = sold_out_flag)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth()
+```
+
+
+The following just looks like noise to me:
+
+
+```{r}
+ggplot(bakery_data,
+       aes(date, num_items, color = day_category_both, shape = sold_out_flag, alpha = sold_out_flag)) +
+  geom_point(alpha = 0.3) +
+  facet_wrap(~year, scales = "free_x") +
+  scale_y_continuous(limits = c(0,100))
+```
+
+```{r}
+bakery_data %>%
+  group_by(sold_out_flag) %>%
+  summarize(
+    mean_resid = mean(resid_nb, na.rm = TRUE),
+    median_resid = median(resid_nb, na.rm = TRUE),
+    n = n()
+  )
+
+```
+
+## Future improvments
+
+sold_out_flag to sold_out_flag2 whereby it registers as sold out either:
+
+- last sale was 300 minutes before close, OR
+- sales were above median and 50 minutes before close.
+
+We may be missing sold_out_flag on high sales days
+
+# Models with sold out flag
+
+```{r}
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type +
+      sold_out_flag,
+    data = bakery_data
+  )
+summary(baseline_model_nb)
+```
+
+
+Sold out flag:
+
+```{r}
+1 - exp(-0.38978)
+```
+
+- When a bakery item appears sold out ≥300 min before close, observed sales are ~32% lower than latent demand.
+
+```{r}
+# Aic Drop 
+7340.2 - 7307.1
+```
+
+
+Overall:
+
+- AIC drop of 33.1 - decisive improvement
+- Dispersion slightly reduced → censoring variance explained
+- No coefficient instability elsewhere
+
+
+Modeling:
+
+- include sold-out flag in each category model, predicting as false
+
+## Bakery Interaction
+
+```{r}
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      sold_out_flag*bakery_type,
+    data = bakery_data
+  )
+summary(baseline_model_nb)
+```
+
+## Comp
+
+```{r}
+baseline_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 2) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      sold_out_flag:bakery_type +
+      bakery_type +
+      sold_out_flag,
+    data = bakery_data
+  )
+summary(baseline_model_nb)
+```
+
+
+
+# Final Model ??
+
+With interaction term for thanksgiving
+
+```{r}
+final_model_nb <-
+  glm.nb(
+    num_items ~ 
+      ns(season_week, df = 3) +
+      day_category_both +
+      PYO_strawberry +
+      Thanksgiving_weekend +
+      bakery_type +
+      sold_out_flag +
+      sold_out_flag:bakery_type +
+      bakery_type:Thanksgiving_weekend, ## PIES!!!
+    data = bakery_data
+  )
+summary(final_model_nb)
+```
+```{r}
+exp(1.575)  # ≈ 4.8× pie sales on Thanksgiving
+```
+
+```{r}
+# Aic Drop 
+7307.1 - 7179.5
+```
+
+## Conclusions
+
+- AIC = 7304.8, best so far
+- Theta ≈ 8.2, stable dispersion
+- No coefficient explosions
+- Singularities only where they must exist (Pie)
+
+## Interpretation 
+
+Muffins:
+
+- base sell out effect: -0.70376    
+- muffin sell out effect: same (base)
+- selling out has 50.5% suppression of sales
+
+```{r}
+- 0.70376 
+1-exp(- 0.70376 )
+```
+
+Specialty very close to muffins
+
+Multigrain:
+
+- base sell out effect: -0.70376    
+- Total multigrain sell out effect: - 0.70376 + 0.24049 = -0.46327
+- selling out has 37.1% suppression of sales
+
+```{r}
+- 0.70376 + 0.24049    
+1-exp(-0.46327)
+```
+
+Pilgram:
+
+- selling out has 13.2% suppression of sales
+
+```{r}
+- 0.70376 + 0.56276    
+1- exp(0.56276-0.70376)
+```    
+
+
+Pie:
+
+No effect. (Never sells out)
+
+
+Question:
+
+- In your experience, what sells out the most?
+- What is most often overstocked/wasted?
+
+
+
+
+
+## Residuals
+
+
+
+```{r}
+# update Residuals
+bakery_data <- bakery_data %>%
+  mutate(
+    num_items_pred = predict(
+      final_model_nb,      # replace with your model object name
+      newdata = bakery_data,
+      type = "response"  # IMPORTANT: mean count, not log-scale
+    ),
+    resid_nb = residuals(final_model_nb, type = "pearson"), # Variance-Standardized
+    num_items_residual = num_items - num_items_pred # raw residuals
+  ) %>% relocate( num_items, .before = num_items_pred)
+```
+
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    )
+```
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  labs(
+      title = "Standardized Residuals vs. Fitted Values"
+    ) +
+  scale_x_continuous(limits = c(0,100)) +
+  scale_y_continuous(breaks = scales::pretty_breaks())
+```
+
+
+Relative Heteroscedasticity up to 100 predicted number of items
+
+The few extreme-demand days (Thanksgiving-class events) that are real, rare, and correctly modeled as part of the stochastic process.
+
+
+## Residuals by Bakery Type
+
+```{r}
+ggplot(bakery_data,
+       aes(num_items_pred, resid_nb, color = last_sale_min_to_close)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth() +
+  facet_wrap(~bakery_type, scales = "free")
+```
+
+## Visualization of residuals by bakery type
+
+```{r}
+plot_data <-  bakery_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "num_items"
+)
+```
+
+```{r}
+type_names = bakery_data$bakery_type %>% unique()
+plots <- vector("list",5)
+for (i in 1:5) {
+  type = type_names[i]
+
+  plots[[i]] <- plot_data %>% filter(bakery_type == type) %>% ggplot(aes(x = date, y = num_items, color = model, 
+                                                           shape =  day_category_both, 
+                                                           alpha = last_sale_min_to_close_cat )) +
+    scale_alpha_manual(values = c("<100" = 0.3, "100-200" = 0.5, "200-300" = 0.70, ">300" = 1)) +
+    geom_point() +
+    facet_wrap(~year, scales = "free_x") +
+    labs(
+      title = paste0(type," - Prediction vs Actual Sales"),
+      y = "number of items",
+      x = "date"
+    )
+  print(plots[[i]])
+}
+
+```
+
+Looks decent, but I realize seasonality effects are different for **each product type**, so I need to explore whether including interaction between seasonality and product is feasible in one model, or if I need to use separate models.
+
+See Model A_JOINT and Model_INDEPENDENT

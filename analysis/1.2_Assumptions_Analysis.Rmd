@@ -1,0 +1,189 @@
+---
+title: "Assumptions Analysis"
+author: ''
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+  pdf_document:
+    toc: true
+subtitle: "2024-2025 Seasons"
+fontsize: 11pt
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+
+```{r warning=FALSE}
+library(tidyverse)
+library(here)
+idata <- here("data","processed","items_by_date.rds") %>% read_rds()
+```
+
+
+
+# Prelims
+
+
+> will use item_gross_amount
+
+# Relationship between Bakery Sales and Total Gross Sales
+
+
+```{r}
+sales_totals <- idata %>% group_by(date, year) %>% 
+  summarize(
+    total_sales = sum(gross_sales),
+    bakery_sales = sum(gross_sales[bakery]),
+    store_totals = sum(num_items),
+    bakery_totals = sum(num_items[bakery]),
+    muffin_totals = sum(num_items[bakery_type == "Muffins"], na.rm = T),
+    multi_totals = sum(num_items[bakery_type == "Multigrain"], na.rm = T),
+    pilgrim_totals = sum(num_items[bakery_type == "Pilgrim"], na.rm = T),
+    specialty_totals = sum(num_items[bakery_type == "Specialty"], na.rm = T),
+    .groups = "drop"
+  )
+sales_totals
+```
+
+```{r}
+sales_totals %>%
+  group_by(year) %>%
+  summarize(
+    cor_store_bakery =
+      cor(store_totals, bakery_totals, use = "pairwise.complete.obs"),
+    .groups = "drop"
+  )
+```
+
+
+
+```{r}
+sales_totals %>% pivot_longer(
+  cols = c(store_totals,bakery_totals),
+  names_to = "totals"
+) %>% ggplot(aes(x = date, y = value, color = totals)) + 
+  geom_line() +
+  facet_wrap(~year, scales = "free_x")
+```
+
+
+```{r}
+cor_matrix <- sales_totals %>%
+  select(where(is.numeric)) %>%
+  cor(use = "pairwise.complete.obs")
+
+cor_matrix
+```
+
+
+
+
+```{r}
+sales_totals %>%
+  pivot_longer(
+    cols = c(bakery_totals, store_totals),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  group_by(series) %>%
+  mutate(value_norm = value / max(value, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(date, value_norm, color = series)) +
+  geom_line() +
+  theme_minimal() +
+  labs(y = "Indexed to max = 1", x = NULL, color = NULL) + 
+  facet_wrap(~year, scales = "free_x", ncol = 1) + 
+  labs(
+    title = "Comparison of normalized Sales of Store and Bakery items by date"
+  )
+
+```
+
+```{r}
+sales_totals %>%
+  pivot_longer(
+    cols = c(muffin_totals, multi_totals, pilgrim_totals, specialty_totals),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  group_by(series) %>%
+  mutate(value_norm = value / max(value, na.rm = TRUE)) %>%
+  ungroup() %>%
+  ggplot(aes(date, value_norm, color = series)) +
+  geom_line() +
+  theme_minimal() +
+  labs(y = "Indexed to max = 1", x = NULL, color = NULL) + 
+  facet_wrap(~year, scales = "free_x", ncol = 1) + 
+  labs(
+    title = "Normalized Sales of Store and Bakery items by date"
+  )
+
+```
+
+
+
+```{r}
+sales_totals %>% filter( year == 2024) %>% 
+  mutate(
+    date_cat = date < date("2024-08-15")
+  ) %>% 
+  pivot_longer(
+    cols = c(muffin_totals, multi_totals, pilgrim_totals, specialty_totals),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  group_by(series) %>%
+  mutate(value_norm = value) %>%
+  ungroup() %>%
+  ggplot(aes(date, value_norm, color = series)) +
+  geom_line() +
+  theme_minimal() +
+  facet_wrap(~date_cat, scales = "free_x", ncol = 1) +
+  labs(y = "Count", x = NULL, color = NULL) + 
+  labs(
+    title = "Sales of Store and Bakery items by date",
+    subtitle = "2024"
+  )
+
+```
+
+
+```{r}
+sales_totals %>% filter( year == 2025) %>% 
+  mutate(
+    date_cat = date < date("2025-08-15")
+  ) %>% 
+  pivot_longer(
+    cols = c(muffin_totals, multi_totals, pilgrim_totals, specialty_totals),
+    names_to = "series",
+    values_to = "value"
+  ) %>%
+  group_by(series) %>%
+  mutate(value_norm = value) %>%
+  ungroup() %>%
+  ggplot(aes(date, value_norm, color = series)) +
+  geom_line() +
+  theme_minimal() +
+  facet_wrap(~date_cat, scales = "free_x", ncol = 1) +
+  labs(y = "Count", x = NULL, color = NULL) + 
+  labs(
+    title = "Sales of Store and Bakery items by date",
+    subtitle = "2025"
+  )
+
+```

@@ -1,0 +1,461 @@
+---
+title: "Weather Discriminator Analysis"
+author: "PR"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+fontsize: 11pt
+---
+
+
+```{r warning=FALSE}
+library(tidyverse)
+library(here)
+model_data <- here("data","processed","date_metrics.rds") %>% read_rds()
+```
+
+```{r}
+model_data %>% count(day_category_Toronto)
+model_data %>% count(day_category_York)
+model_data %>% count(day_category_both)
+model_data %>% count(Thanksgiving_weekend)
+```
+```{r}
+model_data %>% filter(day_category == "CLOSED")
+```
+# Data trends
+
+```{r}
+model_data %>% ggplot(aes(x = date, y = num_items, color = day_category_both, shape = Thanksgiving_weekend)) +
+  geom_point() +
+  facet_wrap(~year, scales = "free_x")
+```
+
+```{r}
+model_data %>% ggplot(aes(x = date, y = gross, color = day_category_both, shape = Thanksgiving_weekend)) +
+  geom_point() +
+  facet_wrap(~year, scales = "free_x")
+```
+
+# Baseline Model
+
+
+
+## Step 1: Define baseline expected sales
+
+Outcome-anchored residual approach
+
+
+Fit a baseline model without weather:
+
+baseline_model:
+gross_sales ~ week_of_season + day_category
+
+
+(or same for transaction_count)
+
+
+gross_sales ~ season_week + day_category
+
+
+### Model 1
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_Toronto + PYO_strawberry + Thanksgiving_weekend,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+### Model 2
+
+```{r}
+library(splines)
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_York + PYO_strawberry + Thanksgiving_weekend,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+### Model 3
+
+```{r}
+library(splines)
+
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_both + PYO_strawberry + Thanksgiving_weekend,
+    data = model_data
+  )
+summary(baseline_model)
+```
+### Model 4
+
+```{r}
+library(splines)
+
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_cleaned + PYO_strawberry + Thanksgiving_weekend,
+    data = model_data
+  )
+summary(baseline_model)
+```
+### Model 5 
+
+Adding weather index - doesn't doo much
+
+```{r}
+library(splines)
+
+
+baseline_model <-
+  lm(
+    num_items ~ ns(season_week, df = 3) + day_category_cleaned + PYO_strawberry + Thanksgiving_weekend + weather_index,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+
+## Step 2: Compute residuals
+
+Use Model 3
+
+```{r}
+baseline_model <-
+  lm(
+     num_items ~ ns(season_week, df = 3) + day_category_both + PYO_strawberry + Thanksgiving_weekend,
+    data = model_data
+  )
+summary(baseline_model)
+```
+
+
+> residual = observed_sales - expected_sales
+
+```{r}
+model_data <- model_data %>% mutate(
+  num_items_pred = predict(baseline_model, newdata = model_data),
+  residuals = num_items - num_items_pred
+)
+
+plot_data <-  model_data %>% pivot_longer(
+  cols = c(num_items_pred, num_items),
+  names_to = "model",
+  values_to = "total_num_items"
+)
+```
+
+```{r}
+plot_data %>% filter( date == "2025-08-02")
+```
+
+### Residuals by Category
+
+
+```{r}
+plot_data %>% ggplot(aes(x = date, y = total_num_items, color = model, shape =  day_category_both)) +
+  geom_point(alpha = 0.8) + 
+  facet_wrap(~year, scales = "free_x")
+```
+
+
+
+```{r}
+model_data %>% ggplot(aes(x = residuals, fill = day_category_both )) +
+  geom_boxplot()
+```
+
+
+
+### Residuals by Weather Scores
+
+```{r}
+plot_data %>% ggplot(aes(x = date, y = total_num_items, shape = model, col =  weather_score)) +
+  geom_point() + 
+  facet_wrap(~year, scales = "free_x")
+```
+
+
+
+```{r}
+model_data %>% ggplot(aes(x = residuals, fill = weather_index )) +
+  geom_boxplot()
+```
+
+
+```{r}
+model_data %>% ggplot(aes(x = residuals, col = weather_index )) +
+  geom_density() + facet_wrap(~day_category_both)
+```
+
+
+### Heteroscedasticity
+
+```{r}
+ggplot(model_data, aes(num_items_pred, residuals, color = day_category_both)) +
+  geom_point(alpha = 0.4) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x = "Predicted records", y = "Residuals")
+```
+
+### Residuals by weather
+
+#### Max Temp
+
+```{r}
+model_data %>% ggplot(aes(max_temp_c, residuals, color = day_category_both)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(span = 0.1, aes(group = 1), color = "black", se = TRUE)
+```
+
+```{r}
+model_data <- model_data %>% mutate(
+  extreme_temp_flag = (max_temp_c < 12 | max_temp_c > 31)
+)
+```
+
+```{r}
+model_data %>% ggplot(aes(residuals, fill = extreme_temp_flag)) +
+  geom_boxplot()
+```
+
+#### Precip
+
+
+```{r}
+model_data %>% ggplot(aes(total_precip_mm, residuals, color = day_category_both)) +
+  geom_point(alpha = 0.8) +
+  geom_smooth(aes(group = 1), color = "black", se = TRUE)
+```
+
+
+#### High Wind
+
+```{r}
+model_data %>% ggplot(aes(residuals, fill = high_wind_flag)) +
+  geom_boxplot()
+```
+
+```{r}
+model_data %>% ggplot(aes(residuals, fill = precip_flag)) +
+  geom_boxplot()
+```
+
+#### Residual Model
+
+```{r}
+residual_model = lm( residuals ~ precip_flag + high_wind_flag + extreme_temp_flag, data = model_data)
+summary(residual_model)
+```
+
+
+
+## Step 3: Label outcomes
+
+
+Now weather becomes a discriminator of underperformance, not raw sales.
+
+This avoids:
+
+- Saturday bias
+- Holiday effects
+- Thankgiving effects
+- PYO Straberry effects
+
+
+bad_day  = residual <= quantile(residual, 0.25)
+good_day = residual >= quantile(residual, 0.75)
+
+### Feature Engineering
+
+```{r}
+model_data <- model_data %>% mutate(
+  outcome_label = case_when(
+    residuals <= quantile(residuals, 0.25) ~ "bad_day",
+    residuals >= quantile(residuals, 0.75) ~ "good_day",
+    TRUE ~ "neutral",
+  ) %>% factor(levels = c("bad_day", "neutral", "good_day")),
+  extreme_temp_flag = (max_temp_c < 12 | max_temp_c > 31), # 53.6-87,7 degrees F
+  good_day = outcome_label == "good_day",
+  bad_day = outcome_label == "bad_day",
+  weather_flag = (precip_flag | high_wind_flag | extreme_temp_flag),
+  neutral_flag = (high_wind_flag & extreme_temp_flag),
+  weather_category = case_when(
+    precip_flag ~ "bad_weather",
+    (!high_wind_flag & !extreme_temp_flag) ~ "good_weather",
+    TRUE ~ "neutral_weather"
+  ) %>% factor(levels = c("bad_weather","neutral_weather","good_weather"))
+)
+```
+
+```{r}
+model_data %>% ggplot(aes(residuals, fill = weather_category)) +
+  geom_boxplot()
+```
+
+### Logistic Regression
+
+#### Good day Predictions
+
+```{r}
+log_model <- glm( good_day ~ precip_flag + high_wind_flag + extreme_temp_flag, 
+                 data =  model_data,
+                 family = "binomial")
+summary(log_model)
+```
+
+```{r}
+log_model <- glm( good_day ~ precip_flag, 
+                 data =  model_data,
+                 family = "binomial")
+summary(log_model)
+```
+
+#### Bad day Predictions
+
+
+```{r}
+log_model <- glm( bad_day ~  precip_flag + high_wind_flag + extreme_temp_flag,
+                 data =  model_data,
+                 family = "binomial")
+summary(log_model)
+```
+
+```{r}
+log_model <- glm( bad_day ~ precip_flag, 
+                 data =  model_data,
+                 family = "binomial")
+summary(log_model)
+```
+
+
+```{r}
+log_model <- glm( bad_day ~ weather_flag, 
+                 data =  model_data,
+                 family = "binomial")
+summary(log_model)
+```
+### Ordinal Regression
+
+
+```{r}
+library(tidyverse)
+#library(tidymodels)  # parsnip, recipes, workflows, broom helpers, etc.
+
+
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+AIC: 524.8482 
+
+#### Rain, wind, and extreme temp
+
+```{r}
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag + high_wind_flag + extreme_temp_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+AIC: 525.3244 
+
+#### Rain, Extreme Temp
+
+```{r}
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag + extreme_temp_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+AIC: 524.1651
+
+
+#### Weather Category
+
+
+```{r}
+ord_fit <- MASS::polr(
+  outcome_label ~ weather_category,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+
+```{r}
+ord_fit <- MASS::polr(
+  outcome_label ~ precip_flag,
+  data = model_data,
+  Hess = TRUE
+)
+summary(ord_fit)
+```
+
+
+```{r}
+
+# Odds ratios (exp(beta))
+exp(coef(ord_fit))
+```
+
+```{r}
+# Predicted probabilities + predicted class
+pred_probs <- predict(ord_fit, model_data, type = "prob")
+pred_class <- predict(ord_fit, model_data, type = "class")
+
+bind_cols(model_data, pred_class, pred_probs) %>% head()
+
+```
+
+```{r}
+# Coefficients
+library(broom)  # tidy()
+tidy(ord_fit)
+```
+
+
+```{r}
+model_data %>%
+  select(outcome_label, precip_flag, high_wind_flag, extreme_temp_flag, weather_flag) %>%
+  summary()
+```
+
+
+
+
+## Limitations/Next Steps
+
+Lm is for continuous variables, whereas records is a count.
+
+Explore log1p, poisson, and quasi-poisson GLM in future, time permitting:
+
