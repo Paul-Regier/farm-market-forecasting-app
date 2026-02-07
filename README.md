@@ -41,7 +41,7 @@ https://docs.google.com/spreadsheets/d/1mPhrj-K3EcQd408sD4dL7I-pDWL7NR-3ubBxPLot
 
 ### Decision Support 1: Daily Bakery Ordering Dashboard
 
-My initial objective was to build a centralized dashboard to support **daily bakery ordering**, based on predicted demand and carryover inventory.
+My initial objective was to build a centralized dashboard to support **daily bakery ordering**, based on predicted demand, carryover inventory, and forecasted weather outcomes.
 
 This supports two core business decisions:
 - Improving the bottom line on bakery sales by reducing stockouts and waste.
@@ -62,8 +62,8 @@ Sales patterns exhibit strong variability due to seasonality, holidays, school p
 
 ### Decision Support 3: Store Traffic and Staffing Planning
 
-Effectively predicting variations in sales above/below baseline due to weather required robust 
-Due to strong seasonal and event-driven variation in sales, motivated **modeling total store traffic**, using total items sold as a proxy.
+Effectively predicting variations in sales above or below a baseline due to weather-driven events required a reliable baseline models.
+Realizing this, I developed a baseline model **modeling total store traffic**, using total items sold as a proxy that accounts for seasonal and event-driven variation in sales.
 
 This supports:
 - Staffing decisions during peak and low-demand periods
