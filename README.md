@@ -1,4 +1,5 @@
 # Small-Scale Farmers Market Forecasting and Ordering Dashboard
+
 This project began after a conversation with a friend who purchased a small, on-site farmers market business (~40 employees). At the time, the business had accumulated two years of point-of-sale data that was used primarily for tax reporting, with little impact on day-to-day operational decisions.
 
 We identified an immediate opportunity: improving ordering and tracking for perishable bakery goods. Bakery orders were based largely on guesswork, leading to frequent stockouts of high-demand items and over-ordering of others—both of which created avoidable cost and operational friction.
@@ -43,8 +44,8 @@ https://docs.google.com/spreadsheets/d/1mPhrj-K3EcQd408sD4dL7I-pDWL7NR-3ubBxPLot
 My initial objective was to build a centralized dashboard to support **daily bakery ordering**, based on predicted demand and carryover inventory.
 
 This supports two core business decisions:
-- Improving the bottom line on bakery sales by reducing stockouts and waste
-- Freeing up owner and staff time -- previously split between manual tracking or fully delegating ordering to the bakery supplier -- so attention could be focused on higher-level business decisions
+- Improving the bottom line on bakery sales by reducing stockouts and waste.
+- Freeing up owner and staff time, previously split between manual tracking or fully delegating ordering to the bakery supplier, so attention could be focused on higher-level business decisions.
 
 ---
 
@@ -61,7 +62,8 @@ Sales patterns exhibit strong variability due to seasonality, holidays, school p
 
 ### Decision Support 3: Store Traffic and Staffing Planning
 
-Given the strong seasonal and event-driven variation in sales, and the project expanded to include **modeling total store traffic**, using total items sold as a proxy.
+Effectively predicting variations in sales above/below baseline due to weather required robust 
+Due to strong seasonal and event-driven variation in sales, motivated **modeling total store traffic**, using total items sold as a proxy.
 
 This supports:
 - Staffing decisions during peak and low-demand periods
@@ -151,7 +153,7 @@ While this is project clearly not a polished, enterprise-scale system, it demons
 - Rigorous, assumption-aware modeling  
 - Rapid development of decision-relevant analytics tools  
 
-I had a blast working on it.
+Due to the high-impact decision support advanced by this project, I found it highly rewarding.
 
 ---
 
@@ -176,40 +178,41 @@ When deployed, a shinyapps.io service account is granted access directly to requ
 
 ## Repository Structure
 
+market-forecasting-dashboard/  
+|  
+├── data/  
+│ ├── raw/  
+│ │ ├── sales_2024/  
+│ │ ├── sales_2025/  
+│ │ ├── weather/  
+│ │ └── calendar/  
+│ ├── processed/  
+│ └── model/  
+│  
+├── model-prep/  
+│ ├── 01_order_data_prep.R  
+│ ├── 02_calendar_generation.R  
+│ ├── 03_weather_data_processing.R  
+│ ├── 04_order_data_feature_engineering.R  
+│ ├── 05_baseline_model.R  
+│ └── README.md  
+│  
+├── analysis/  
+│ ├── Whole mess of files ... this will be cleaned up next on iteration.  
+│  
+├── scripts/  
+│ ├── bakery_model_script.R  
+│ ├── bread_fax_import.R  
+│ ├── general_product_script.R  
+│ └── seasonal_market_projections.R  
+|  
+├── app.R  
+├── global.R  
+├── ui.R  
+├── server.R  
+│  
+├── run_pipeline.R  
+├── paths.R  
+└── README.md  
 
-market-forecasting-dashboard/
-|
-├── data/
-│ ├── raw/
-│ │ ├── sales_2024/
-│ │ ├── sales_2025/
-│ │ ├── weather/
-│ │ └── calendar/
-│ ├── processed/
-│ └── model/
-│
-├── modeling-pipeline/
-│ ├── 01_order_data_prep.R
-│ ├── 02_calendar_generation.R
-│ ├── 03_weather_data_processing.R
-│ ├── 04_order_data_feature_engineering.R
-│ └── README.md
-│
-├── analysis/
-│ ├── Whole mess of files ... this will be cleaned up next on iteration.
-│
-├── scripts/
-│ ├── bakery_model_script.R
-│ ├── bread_fax_import.R
-│ ├── general_product_script.R
-│ └── seasonal_market_projections.R
-|
-├── app.R
-├── global.R
-├── ui.R
-├── server.R
-│
-├── run_pipeline.R
-├── paths.R
-└── README.md
 
